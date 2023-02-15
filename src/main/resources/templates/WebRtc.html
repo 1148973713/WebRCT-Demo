@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+</head>
+
+<body>
+<div id="showWorld"></div>
+<video src="" id="iv" width="500px" height="500px" autoplay="autoplay"></video>
+<input id="sendWorld">
+<!-- <button onclick="sends()">anniu</button> -->
+<button onclick="cn()">niuniu</button>
+</body>
+<script>
+    var text = null
+    var showText = document.getElementById("showWorld")
+    var userid = Math.round(Math.random() * 1000)
+    var socketUrl = "ws://127.0.0.1:8080/msgServer/" + userid
+    var socket = null
+    var localStream = null
+    var pc = null
+    //加入时，聊天室内已有的成员数组
+    var userJoinList = []
+    //记录通道
+    var userPeerList = []
+    //连接socket服务器
+    window.onload = function () {
+        // console.log("My ID:" + userid);
+        socket = new WebSocket(socketUrl)
+        socket.onclose = function (e) {
+            // console.log("服务器关闭了" + e.code);
+            socket.send(userid.toString())
+        }
+        socket.onopen = function () {
+            // console.log("连接服务器成功");
+        }
+        socket.onmessage = function (res) {
+            var obj = JSON.parse(res.data)
+            // console.log(obj);
+            var type = obj.type
+            if (type === "join") {
+                //获取所有数组
+                userJoinList = obj.userIdList
+            } else if (type === "offer") {
+                if (pc) {
+                    console.error('peerConnection已存在!');
+                    return;
+                }
+                //获取来源的Id
+                let sourceId = obj.sourceId
+                InitPeerConnetion(sourceId)
+
+                var rtcs = new RTCSessionDescription(obj)
+                userPeerList[sourceId].setRemoteDescription(rtcs)
+
+                userPeerList[sourceId].createAnswer(function (desc) {
+                    userPeerList[sourceId].setLocalDescription(desc)
+                    // console.log("send answer");
+                    // console.log(desc);
+                    let txt = JSON.stringify(desc).replace('}', "") + ',"sourceId":"' + userid.toString() + '","destinationId":"'+sourceId+'"}';
+                    socket.send(txt)
+                    // console.log("send answer success");
+                }, function () {
+                    // console.log("create answer fail");
+                })
+            } else if (type === "answer") {
+                let sourceId = obj.sourceId
+                if (!userPeerList[sourceId]) {
+                    console.error('peerConnection不存在!');
+                    return;
+                }
+                var rtcs = new RTCSessionDescription(obj)
+                userPeerList[sourceId].setRemoteDescription(rtcs)
+            } else if (type === "candidate") {
+                // console.log("get candidate");
+                let sourceId = obj.sourceId
+                var candidate = new RTCIceCandidate({
+                    sdpMLineIndex: obj.sdpMLineIndex,
+                    sdpMid: obj.sdpMid,
+                    candidate: obj.candidate
+                })
+                userPeerList[sourceId].addIceCandidate(candidate)
+                // console.log("set candidate suceess");
+            }
+        }
+
+        openVideo()
+    }
+
+    //webrtc 建立连接
+    function cn() {
+        for (let destinationId of userJoinList) {
+            //初始化
+            InitPeerConnetion(destinationId)
+            userPeerList[destinationId].createOffer(function (desc) {
+                // console.log("send offer");
+                userPeerList[destinationId].setLocalDescription(desc)
+                //发送到xx服务，sourceId代表通道的创建者
+                var txt = JSON.stringify(desc).replace('}', "") + ',"sourceId":"' + userid.toString() + '","destinationId":"'+destinationId+'"}';
+                socket.send(txt)
+            }, function (err) {
+                // console.log("create offer fail!!!");
+                // console.log(err);
+            })
+        }
+    }
+
+    function openVideo() {
+        navigator.webkitGetUserMedia({video: true, audio: false},
+            function (stream) {
+                localStream = stream
+                document.getElementById("iv").srcObject = stream;
+                document.getElementById("iv").play();
+            },
+            function (e) {
+                // console.log(e.code);
+                return;
+            }
+        )
+    }
+
+    function InitPeerConnetion(userId) {
+        // console.log("init");
+        var peerconntion = null
+        try {
+            peerconntion = new webkitRTCPeerConnection();
+        } catch (e) {
+            // console.log("connet fail");
+            // console.log(e.message);
+        }
+        peerconntion.onicecandidate = function (evt) {
+            // console.log(evt.candidate);
+            if (evt.candidate) {
+                // console.log(evt.candidate);
+                var txt = JSON.stringify({
+                    type: "candidate",
+                    sdpMid: evt.candidate.sdpMid,
+                    sdpMLineIndex: evt.candidate.sdpMLineIndex,
+                    candidate: evt.candidate.candidate,
+                    sourceId: userid.toString(),
+                    destinationId: userId.toString()
+                })
+                // console.log(txt);
+                // console.log("send candidate");
+                socket.send(txt)
+            }
+        }
+        // console.log("add local stream");
+        peerconntion.addStream(localStream)
+        peerconntion.onaddstream = function (event) {
+            var parent = document.getElementsByTagName("body")
+            var videos = document.getElementsByTagName("video");
+
+            var createVideo = document.createElement("video")
+            createVideo.setAttribute("id", "iv" + userId)
+            createVideo.setAttribute("width", "200px")
+            createVideo.setAttribute("autoplay", "autoplay")
+            //videos[number].append(createVideo)
+            parent[0].insertBefore(createVideo, parent[0].childNodes[2]);
+
+            document.getElementById("iv" + userId).srcObject = event.stream
+            document.getElementById("iv" + userId).play()
+
+            // console.log("绑定远程视频流");
+        };
+        userPeerList[userId] = peerconntion
+    }
+</script>
+</html>
